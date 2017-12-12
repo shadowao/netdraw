@@ -4,6 +4,7 @@
 import networkx as nx
 import Tkinter as tk
 from tkFileDialog import askopenfile
+from tkSimpleDialog import askinteger
 
 
 class GraphCanvas(tk.Canvas):
@@ -53,7 +54,7 @@ class GraphCanvas(tk.Canvas):
 
         for node in graph.nodes():
             self.draw_node(node)
-        for edge in graph.edges():
+        for edge in self.get_edges():
             self.draw_edge(edge)
 
         # We need to put the node on the canvas's stack top, if not, we will see the line in node
@@ -84,6 +85,14 @@ class GraphCanvas(tk.Canvas):
         self.graph.edges[edge]['item_id'] = item_id
         self.edge_items[item_id] = item
 
+    def get_edges(self, data=False):
+        """This method is used for MultiGraph, In MultiGraphCanvas, we override this method."""
+        return self.graph.edges(data=data)
+
+    def get_adj_edges(self, node):
+        for k, v in self.graph.adj[node].items():
+            yield (node, k), v
+
     def get_node_pos(self, node):
         if self.pos is None:
             self.calc_pos()
@@ -94,7 +103,10 @@ class GraphCanvas(tk.Canvas):
         if self.pos is None:
             self.calc_pos()
         u, v = edge
-        return list(self.get_node_pos(u)) + list(self.get_node_pos(v))
+        ux, uy, vx, vy = list(self.get_node_pos(u)) + list(self.get_node_pos(v))
+        mx = (ux + vx)/2
+        my = (uy + vy)/2
+        return ux, uy, mx, my, vx, vy
 
     def calc_pos(self):
         """ If there is no pos, we use networkx spring layout to init the pos,
@@ -135,11 +147,9 @@ class GraphCanvas(tk.Canvas):
         self.node_items[item_id].move(delta_x, delta_y)
 
         node = self.node_items[item_id].node
-        x0, y0 = end_x, end_y
         self.pos[node] = end_x, end_y
-        for other, attr in self.graph.adj[node].items():
-            x1, y1 = self.pos[other]
-            self.edge_items[attr['item_id']].move(x0, y0, x1, y1)
+        for edge, attr in self.get_adj_edges(node):
+            self.edge_items[attr['item_id']].move(*self.get_edge_pos(edge))
 
     def move_all(self, start_x, start_y, end_x, end_y):
         delta_x = end_x - start_x
@@ -186,24 +196,114 @@ class GraphCanvas(tk.Canvas):
             self.pos[node_item.node] = x + dx, y + dy
             self.node_items[node_item_id].move(dx, dy)
 
-        for u, v, d in self.graph.edges(data=True):
-            x0, y0 = self.pos[u]
-            x1, y1 = self.pos[v]
-            self.edge_items[d['item_id']].move(x0, y0, x1, y1)
-
+        for edge, d in self.get_edges(data=True):
+            self.edge_items[d['item_id']].move(*self.get_edge_pos(edge))
 
     def onRightButtonPress(self, event):
         """When you press the right button, the node will be marked if you click on the node,
            or the line if click on the line, otherwise nothing.
         """
-
         item_id = self.get_node_overlapping(event)
         if item_id:
-            self.node_items[item_id].mark()
+            menu = tk.Menu(self)
+            menu.add_command(label='Mark', command=lambda: self.node_items[item_id].mark())
+            menu.add_command(label='Shortest Path', command=lambda: self.shortest_path(item_id))
+            menu.post(event.x_root, event.y_root)
         else:
             item_id = self.get_edge_overlapping(event)
             if item_id:
                 self.edge_items[item_id].mark()
+
+    def mark_node(self, node):
+        item_id = self.graph.nodes[node]['item_id']
+        self.node_items[item_id].mark()
+
+    def mark_edge(self, edge):
+        item_id = self.graph.edges[edge]['item_id']
+        self.edge_items[item_id].mark()
+
+    def shortest_path(self, node_item_id):
+        source = self.node_items[node_item_id].node
+        target = askinteger('Shortest Path', 'Destination Node')
+
+        nodes = nx.shortest_path(self.graph, source=source, target=target)
+
+        if len(nodes) > 0:
+            self.mark_node(source)
+
+            for node in nodes[1:]:
+                self.mark_edge((source, node))
+                self.mark_node(node)
+                source = node
+
+            self.mark_node(target)
+
+
+class MultiGraphCanvas(GraphCanvas):
+    def get_edges(self, data=False):
+        return self.graph.edges(keys=True, data=data)
+
+    def get_adj_edges(self, node):
+        for other, edges in self.graph.adj[node].items():
+            for k, attr in edges.items():
+                yield (node, other, k), attr
+
+    def get_edge_pos(self, edge):
+        from math import atan2, cos, sin
+        u, v, k = edge
+        ux, uy, mx, my, vx, vy = GraphCanvas.get_edge_pos(self, (u, v))
+        mx = (ux + vx)/2
+        my = (uy + vy)/2
+
+        theta = atan2(vx - ux, vy - uy)
+
+        mx += (k + 1) * cos(theta) * 20
+        my -= (k + 1) * sin(theta) * 20
+
+        return ux, uy, mx, my, vx, vy
+
+
+class DiGraphCanvas(GraphCanvas):
+
+    def __init__(self, graph, *args, **kwargs):
+        for edge in graph.edges():
+            graph.edges[edge]['is_directed'] = True
+        GraphCanvas.__init__(self, graph, *args, **kwargs)
+
+    def get_adj_edges(self, node):
+        for other, attr in self.graph.adj[node].items():
+            yield (node, other), attr
+
+        for other, attr in self.graph.pred[node].items():
+            yield (other, node), attr
+
+    def get_edge_pos(self, edge):
+        from math import atan2, cos, sin
+        u, v = edge
+        ux, uy, mx, my, vx, vy = GraphCanvas.get_edge_pos(self, (u, v))
+
+        theta = atan2(vx - ux, vy - uy)
+
+        mx += cos(theta) * 20
+        my -= sin(theta) * 20
+
+        return ux, uy, mx, my, vx, vy
+
+
+class MultiDiGraphCanvas(MultiGraphCanvas, DiGraphCanvas):
+    def __init__(self, graph, *args, **kwargs):
+        for edge in graph.edges(keys=True):
+            graph.edges[edge]['is_directed'] = True
+        GraphCanvas.__init__(self, graph, *args, **kwargs)
+
+    def get_adj_edges(self, node):
+        for other, edges in self.graph.adj[node].items():
+            for k, attr in edges.items():
+                yield (node, other, k), attr
+
+        for other, edges in self.graph.pred[node].items():
+            for k, attr in edges.items():
+                yield (other, node, k), attr
 
 
 class NodeItem(object):
@@ -255,15 +355,17 @@ class EdgeItem(object):
         self.text_id = None
 
     def draw(self):
-        self.id = self.canvas.create_line(*self.pos, tags=self.tags)
-        self.text_id = self.canvas.create_text((self.pos[0] + self.pos[2])/2.0,
-                                               (self.pos[1] + self.pos[3])/2.0,
+        if self.edge_attr.get('is_directed', False):
+            self.id = self.canvas.create_line(*self.pos, tags=self.tags, arrow=tk.LAST, arrowshape=(30, 40, 5), smooth=True)
+        else:
+            self.id = self.canvas.create_line(*self.pos, tags=self.tags, smooth=True)
+        self.text_id = self.canvas.create_text(self.pos[2], self.pos[3],
                                                text=self.edge_attr.get('weight', 1), anchor=tk.CENTER)
         return self.id
 
-    def move(self, x0, y0, x1, y1):
-        self.canvas.coords(self.id, x0, y0, x1, y1)
-        self.canvas.coords(self.text_id, (x0 + x1)/2.0, (y0 + y1)/2.0)
+    def move(self, x0, y0, mx, my, x1, y1):
+        self.canvas.coords(self.id, x0, y0, mx, my, x1, y1)
+        self.canvas.coords(self.text_id, mx, my)
 
     def get_pos(self):
         return self.bbox(self.id)
@@ -273,6 +375,24 @@ class EdgeItem(object):
 
     def unmark(self):
         self.canvas.itemconfig(self.id, fill='black')
+
+
+class NodeSelect(tk.Toplevel):
+    def __init__(self, nodes):
+        tk.Toplevel.__init__(self)
+        self.title('Select Node')
+
+        self.listbox = tk.Listbox(self, height=len(nodes))
+
+        for node in nodes:
+            self.listbox.insert(tk.END, node)
+        self.listbox.pack()
+
+        tk.Button(self, text="OK", command=self.ok).pack(side=tk.BOTTOM)
+
+    def ok(self):
+        self.node = self.listbox.get(tk.ACTIVE)
+        self.destroy()
 
 
 class Viewer(tk.Tk):
@@ -289,20 +409,33 @@ class Viewer(tk.Tk):
         self.menu_bar.add_cascade(label='File', menu=file_menu)
 
         graph_menu = tk.Menu(self.menu_bar, tearoff=0)
-        graph_menu.add_command(label='Star', command=lambda: self.draw_graph(nx.star_graph(20)))
-        graph_menu.add_command(label='Path', command=lambda: self.draw_graph(nx.path_graph(10)))
-        graph_menu.add_command(label='Random', command=lambda: self.draw_graph(nx.random_geometric_graph(20, 0.25)))
-        graph_menu.add_command(label='Cubical', command=lambda: self.draw_graph(nx.cubical_graph()))
-        graph_menu.add_command(label='Gnm Random', command=lambda: self.draw_graph(nx.gnm_random_graph(10, 20)))
+        graph_menu.add_command(label='Star', command=lambda: self.draw_graph(GraphCanvas, nx.star_graph(20)))
+        graph_menu.add_command(label='Path', command=lambda: self.draw_graph(GraphCanvas, nx.path_graph(10)))
+        graph_menu.add_command(label='Random', command=lambda: self.draw_graph(GraphCanvas, nx.random_geometric_graph(20, 0.25)))
+        graph_menu.add_command(label='Cubical', command=lambda: self.draw_graph(GraphCanvas, nx.cubical_graph()))
+        graph_menu.add_command(label='Gnm Random', command=lambda: self.draw_graph(GraphCanvas, nx.gnm_random_graph(10, 20)))
         self.menu_bar.add_cascade(label='Graph', menu=graph_menu)
 
-    def draw_graph(self, graph):
-        graph_canvas = GraphCanvas(graph, master=self, width=self.winfo_screenwidth()/2, height=self.winfo_screenheight()/2)
+    def draw_graph(self, canvas, graph, *args, **kwargs):
+        graph_canvas = canvas(graph, master=self, width=self.winfo_screenwidth()/2, height=self.winfo_screenheight()/2, *args, **kwargs)
         graph_canvas.grid(row=0, column=0, sticky='NESW')
 
     def open_file(self):
         file_path = askopenfile()
-        self.draw_graph(nx.read_edgelist(file_path))
+        if file_path:
+            if file_path.name.endswith('.mdiedgelist'):
+                canvas = MultiDiGraphCanvas
+                graph = nx.MultiDiGraph()
+            elif file_path.name.endswith('.medgelist'):
+                canvas = MultiGraphCanvas
+                graph = nx.MultiGraph()
+            elif file_path.name.endswith('.diedgelist'):
+                canvas = DiGraphCanvas
+                graph = nx.DiGraph()
+            else:
+                canvas = GraphCanvas
+                graph = nx.Graph()
+            self.draw_graph(canvas, nx.read_edgelist(file_path, create_using=graph))
 
 
 if __name__ == '__main__':
