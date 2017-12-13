@@ -3,8 +3,10 @@
 
 import networkx as nx
 import Tkinter as tk
+import ttk
+import tkMessageBox
 from tkFileDialog import askopenfile
-from tkSimpleDialog import askinteger
+from tkSimpleDialog import Dialog
 
 
 class GraphCanvas(tk.Canvas):
@@ -16,6 +18,9 @@ class GraphCanvas(tk.Canvas):
 
         # The position of every node
         self.pos = None
+
+        # For Some Infomation , eg Node Info, Shortest Path
+        self.info_label_id = None
 
         # We use a canvas item to draw node and edge, so every node map to a node_items, and
         # every edge has a edge_item, too.
@@ -42,8 +47,8 @@ class GraphCanvas(tk.Canvas):
         # This for mark a item (node or edge when click)
         self.bind('<ButtonPress-3>', self.onRightButtonPress)
 
-        # Zoom canvas
-        self.bind_all('<MouseWheel>', self.onZoom)
+        # Must Use master to bind MouseWheel, or it doesn't work
+        self.master.bind('<MouseWheel>', self.onZoom)
 
         # draw action
         self.draw()
@@ -87,7 +92,12 @@ class GraphCanvas(tk.Canvas):
 
     def get_edges(self, data=False):
         """This method is used for MultiGraph, In MultiGraphCanvas, we override this method."""
-        return self.graph.edges(data=data)
+        if data:
+            for u, v, d in self.graph.edges(data=True):
+                yield (u, v), d
+        else:
+            for u, v in self.graph.edges():
+                yield (u, v)
 
     def get_adj_edges(self, node):
         for k, v in self.graph.adj[node].items():
@@ -156,7 +166,7 @@ class GraphCanvas(tk.Canvas):
         delta_y = end_y - start_y
 
         self.move(tk.ALL, delta_x, delta_y)
-
+        self.coords(self.info_label_id, 5, 5)
         self.calc_pos()
 
     def onLeftButtonPress(self, event):
@@ -165,6 +175,7 @@ class GraphCanvas(tk.Canvas):
         if item_id is None:
             self.drag_event = {'start_x': event.x, 'start_y': event.y, 'is_node': False}
         else:
+            self.draw_node_info(self.node_items[item_id].node)
             self.drag_event = {'start_x': event.x, 'start_y': event.y, 'is_node': True, 'item_id': item_id}
 
     def onLeftButtonRelease(self, event):
@@ -203,45 +214,79 @@ class GraphCanvas(tk.Canvas):
         """When you press the right button, the node will be marked if you click on the node,
            or the line if click on the line, otherwise nothing.
         """
+        menu = tk.Menu(self)
+
         item_id = self.get_node_overlapping(event)
         if item_id:
-            menu = tk.Menu(self)
-            menu.add_command(label='Mark', command=lambda: self.node_items[item_id].mark())
             menu.add_command(label='Shortest Path', command=lambda: self.shortest_path(item_id))
-            menu.post(event.x_root, event.y_root)
         else:
-            item_id = self.get_edge_overlapping(event)
-            if item_id:
-                self.edge_items[item_id].mark()
+            menu.add_command(label='Clear Mark', command=lambda: self.unmark_all())
+        menu.post(event.x_root, event.y_root)
 
     def mark_node(self, node):
         item_id = self.graph.nodes[node]['item_id']
         self.node_items[item_id].mark()
 
-    def mark_edge(self, edge):
-        item_id = self.graph.edges[edge]['item_id']
+    def mark_edge(self, source, target, *args):
+        item_id = self.graph.edges[(source, target)]['item_id']
         self.edge_items[item_id].mark()
 
-    def shortest_path(self, node_item_id):
-        source = self.node_items[node_item_id].node
-        target = askinteger('Shortest Path', 'Destination Node')
+    def unmark_all(self):
+        for item in self.node_items.values():
+            item.unmark()
+        for item in self.edge_items.values():
+            item.unmark()
 
-        nodes = nx.shortest_path(self.graph, source=source, target=target)
+    def shortest_path(self, node_item_id):
+        self.unmark_all()
+
+        source = self.node_items[node_item_id].node
+        target = self.ask_node()
+
+        if not target:
+            return
+        try:
+            nodes = nx.shortest_path(self.graph, source=source, target=target)
+            length = nx.shortest_path_length(self.graph, source=source, target=target)
+        except nx.NodeNotFound:
+            target = int(target)
+            nodes = nx.shortest_path(self.graph, source=source, target=target)
+            length = nx.shortest_path_length(self.graph, source=source, target=target)
+        except nx.NetworkXNoPath:
+            tkMessageBox.showwarning('Tip', 'No Shortest Path')
+            return
 
         if len(nodes) > 0:
+            self.draw_text('Node List: %s\nShortest Length: %s' % (nodes, length))
             self.mark_node(source)
 
             for node in nodes[1:]:
-                self.mark_edge((source, node))
+                self.mark_edge(source, node)
                 self.mark_node(node)
                 source = node
-
             self.mark_node(target)
+
+    def ask_node(self):
+        dialog = NodeSelect(self.graph.nodes(), self.master)
+        return dialog.result
+
+    def draw_text(self, text):
+        if self.info_label_id is not None:
+            self.delete(self.info_label_id)
+        self.info_label_id = self.create_text(5, 5, anchor=tk.NW, text=text, tags='Label')
+
+    def draw_node_info(self, node):
+        self.draw_text('Node: %s\nDegree: %s' % (node, self.graph.degree(node)))
 
 
 class MultiGraphCanvas(GraphCanvas):
     def get_edges(self, data=False):
-        return self.graph.edges(keys=True, data=data)
+        if data:
+            for u, v, k, d in self.graph.edges(keys=True, data=True):
+                yield (u, v, k), d
+        else:
+            for u, v, k in self.graph.edges(keys=True):
+                yield (u, v, k)
 
     def get_adj_edges(self, node):
         for other, edges in self.graph.adj[node].items():
@@ -261,6 +306,21 @@ class MultiGraphCanvas(GraphCanvas):
         my -= (k + 1) * sin(theta) * 20
 
         return ux, uy, mx, my, vx, vy
+
+    def mark_edge(self, source, target, key=None):
+        if key is None:
+            min_edge_length = -1
+            for k, attr in self.graph[source][target].items():
+                if min_edge_length == -1:
+                    key = k
+                    min_edge_length = attr.get('weight', 1)
+                else:
+                    if min_edge_length > attr.get('weight', 1):
+                        key = k
+                        min_edge_length = attr.get('weight', 1)
+
+        item_id = self.graph.edges[(source, target, key)]['item_id']
+        self.edge_items[item_id].mark()
 
 
 class DiGraphCanvas(GraphCanvas):
@@ -377,22 +437,26 @@ class EdgeItem(object):
         self.canvas.itemconfig(self.id, fill='black')
 
 
-class NodeSelect(tk.Toplevel):
-    def __init__(self, nodes):
-        tk.Toplevel.__init__(self)
+class NodeSelect(Dialog):
+
+    def __init__(self, nodes, master, *args, **kwargs):
+        self.nodes = nodes
+        self.result = None
+        Dialog.__init__(self, master, *args, **kwargs)
+
+    def body(self, master):
         self.title('Select Node')
+        self.geometry("+%d+%d" % (master.winfo_rootx()+50, master.winfo_rooty()+50))
 
-        self.listbox = tk.Listbox(self, height=len(nodes))
+        self.combo = ttk.Combobox(self, state='readonly')
+        self.combo['values'] = tuple(self.nodes)
+        self.combo.current(0)
+        self.combo.pack()
 
-        for node in nodes:
-            self.listbox.insert(tk.END, node)
-        self.listbox.pack()
+        return self.combo
 
-        tk.Button(self, text="OK", command=self.ok).pack(side=tk.BOTTOM)
-
-    def ok(self):
-        self.node = self.listbox.get(tk.ACTIVE)
-        self.destroy()
+    def apply(self):
+        self.result = self.combo.get()
 
 
 class Viewer(tk.Tk):
@@ -418,6 +482,7 @@ class Viewer(tk.Tk):
 
     def draw_graph(self, canvas, graph, *args, **kwargs):
         graph_canvas = canvas(graph, master=self, width=self.winfo_screenwidth()/2, height=self.winfo_screenheight()/2, *args, **kwargs)
+
         graph_canvas.grid(row=0, column=0, sticky='NESW')
 
     def open_file(self):
