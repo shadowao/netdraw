@@ -2,11 +2,10 @@
 
 
 import networkx as nx
-import Tkinter as tk
-import ttk
-import tkMessageBox
-from tkFileDialog import askopenfile
-from tkSimpleDialog import Dialog
+import tkinter as tk
+from tkinter import ttk
+from tkinter.filedialog import askopenfile
+from tkinter.simpledialog import Dialog
 
 
 class GraphCanvas(tk.Canvas):
@@ -166,7 +165,8 @@ class GraphCanvas(tk.Canvas):
         delta_y = end_y - start_y
 
         self.move(tk.ALL, delta_x, delta_y)
-        self.coords(self.info_label_id, 5, 5)
+        if self.info_label_id is not None:
+            self.coords(self.info_label_id, 5, 5)
         self.calc_pos()
 
     def onLeftButtonPress(self, event):
@@ -253,7 +253,7 @@ class GraphCanvas(tk.Canvas):
             nodes = nx.shortest_path(self.graph, source=source, target=target)
             length = nx.shortest_path_length(self.graph, source=source, target=target)
         except nx.NetworkXNoPath:
-            tkMessageBox.showwarning('Tip', 'No Shortest Path')
+            tk.messagebox.showwarning('Tip', 'No Shortest Path')
             return
 
         if len(nodes) > 0:
@@ -462,7 +462,7 @@ class NodeSelect(Dialog):
 class Viewer(tk.Tk):
     def __init__(self, *args, **kwargs):
         tk.Tk.__init__(self, *args, **kwargs)
-        self.geometry(str(self.winfo_screenwidth()/2) + 'x' + str(self.winfo_screenheight()/2))
+        self.geometry(str(self.winfo_screenwidth()//2) + 'x' + str(self.winfo_screenheight()//2))
         self.rowconfigure(1, weight=1)
         self.columnconfigure(1, weight=1)
 
@@ -500,7 +500,7 @@ class Viewer(tk.Tk):
             else:
                 canvas = GraphCanvas
                 graph = nx.Graph()
-            self.draw_graph(canvas, nx.read_edgelist(file_path, create_using=graph))
+            self.draw_graph(canvas, nx.read_edgelist(file_path.name, create_using=graph))
 
 
 if __name__ == '__main__':
