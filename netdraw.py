@@ -246,8 +246,8 @@ class GraphCanvas(tk.Canvas):
         if not target:
             return
         try:
-            nodes = nx.shortest_path(self.graph, source=source, target=target)
-            length = nx.shortest_path_length(self.graph, source=source, target=target)
+            nodes = nx.shortest_path(self.graph, source=source, target=target, weight='weight')
+            length = nx.shortest_path_length(self.graph, source=source, target=target, weight='weight')
         except nx.NodeNotFound:
             target = int(target)
             nodes = nx.shortest_path(self.graph, source=source, target=target)
@@ -344,10 +344,13 @@ class DiGraphCanvas(GraphCanvas):
 
         theta = atan2(vx - ux, vy - uy)
 
-        mx += cos(theta) * 20
-        my -= sin(theta) * 20
+        mx += cos(theta) * 30
+        my -= sin(theta) * 30
 
         return ux, uy, mx, my, vx, vy
+    
+    def draw_node_info(self, node):
+        self.draw_text('Node: %s\nIn Degree: %s\nOut Degree: %s' % (node, self.graph.in_degree(node), self.graph.out_degree(node)))
 
 
 class MultiDiGraphCanvas(MultiGraphCanvas, DiGraphCanvas):
@@ -463,8 +466,8 @@ class Viewer(tk.Tk):
     def __init__(self, *args, **kwargs):
         tk.Tk.__init__(self, *args, **kwargs)
         self.geometry(str(self.winfo_screenwidth()//2) + 'x' + str(self.winfo_screenheight()//2))
-        self.rowconfigure(1, weight=1)
-        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
 
         self.menu_bar = tk.Menu(self)
         self.config(menu=self.menu_bar)
@@ -500,7 +503,7 @@ class Viewer(tk.Tk):
             else:
                 canvas = GraphCanvas
                 graph = nx.Graph()
-            self.draw_graph(canvas, nx.read_edgelist(file_path.name, create_using=graph))
+            self.draw_graph(canvas, nx.read_edgelist(file_path.name, create_using=graph, data=(('weight',float),)))
 
 
 if __name__ == '__main__':
